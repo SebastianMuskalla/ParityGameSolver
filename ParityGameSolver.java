@@ -3,326 +3,10 @@ import java.util.HashSet;
 // This source code is available online
 // https://github.com/SebastianMuskalla/ParityGameSolver
 
-class Position
-{
-    String name;
-    Player player;
-    int priority;
-
-    public Position (String name, Player player, int priority)
-    {
-        this.name = name;
-        this.player = player;
-        this.priority = priority;
-    }
-}
-
-class Transition
-{
-    Position from;
-    Position to;
-
-    public Transition (Position from, Position to)
-    {
-        this.from = from;
-        this.to = to;
-    }
-}
-
-enum Player
-{
-    A, P;
-}
-
-class ParityGame
-{
-    // We use HashSet since they are clonable and Java guarantees that we don't add duplicates
-    HashSet<Position> positions;
-    HashSet<Transition> transitions;
-
-    public ParityGame ()
-    {
-        positions = new HashSet<Position>();
-        transitions = new HashSet<Transition>();
-    }
-
-    public void addTrans (Transition transition)
-    {
-        transitions.add(transition);
-    }
-
-    public void addPos (Position position)
-    {
-        positions.add(position);
-    }
-
-    public int getMaxPriority ()
-    {
-        int n = -1;
-        for (Position p : positions)
-        {
-            if (p.priority > n)
-            {
-                n = p.priority;
-            }
-        }
-        return n;
-    }
-
-    public HashSet<Position> getPositionsWithPriority (int n)
-    {
-        HashSet<Position> res = new HashSet<Position>();
-
-        for (Position p : positions)
-        {
-            if (p.priority == n)
-            {
-                res.add(p);
-            }
-        }
-        return res;
-    }
-
-    public TupleOfWinningRegions MCNZSolve ()
-    {
-        TupleOfWinningRegions res = new TupleOfWinningRegions();
-
-        int n = getMaxPriority();
-
-        if (n < 0)
-        {
-            // This (sub)game is empty
-            // Should this happen?
-            return res;
-        }
-
-        if (n == 0)
-        {
-            // wA = Pos, wB= {}
-            res.winningRegionOfA = positions;
-            return res;
-        }
-
-        HashSet<Position> N = getPositionsWithPriority(n);
-
-        HashSet<Position> attractor;
-
-        // Compute the attractor of the positions with the highest priority
-        if (isEven(n))
-        {
-            // n is even - A wins on the attractor
-            attractor = attractorOf(Player.A, N);
-        }
-        else
-        {
-            // n is odd - P wins on the attractor
-            attractor = attractorOf(Player.P, N);
-        }
-
-        // Shallow copy
-        HashSet<Position> complement = (HashSet<Position>) positions.clone();
-        complement.removeAll(attractor);
-
-        // Compute the subgame induced by the complement of the attractor
-        ParityGame subgame = subgameInducedBy(complement);
-        TupleOfWinningRegions wAwB = subgame.MCNZSolve();
-
-        // We check if the "other player" can't win the subgame on the complement
-        // Then the "player" wins the whole game
-        if (isEven(n) && wAwB.winningRegionOfP.isEmpty())
-        {
-            res.winningRegionOfA = positions;
-            return res;
-        }
-        if (!isEven(n) && wAwB.winningRegionOfA.isEmpty())
-        {
-            res.winningRegionOfP = positions;
-            return res;
-        }
-
-        // The other player wins at least a part of the subgame
-        // We have to calculate on which positions he can enforce a visit to his winning region
-
-        HashSet<Position> attractor2;
-
-        if (isEven(n))
-        {
-            attractor2 = attractorOf(Player.P, wAwB.winningRegionOfP);
-        }
-        else
-        {
-            attractor2 = attractorOf(Player.A, wAwB.winningRegionOfA);
-        }
-
-        // Shallow copy
-        HashSet<Position> complement2 = (HashSet<Position>) positions.clone();
-        complement2.removeAll(attractor2);
-
-        // Compute the subgame induced by the complement of the attractor
-        ParityGame subgame2 = subgameInducedBy(complement2);
-        TupleOfWinningRegions wAwB2 = subgame2.MCNZSolve();
-
-        res.winningRegionOfA = wAwB2.winningRegionOfA;
-        res.winningRegionOfP = wAwB2.winningRegionOfP;
-
-        // Now add the corresponding part from the subgame
-        if (isEven(n))
-        {
-            res.winningRegionOfP.addAll(attractor2);
-
-        }
-        else
-        {
-            res.winningRegionOfA.addAll(attractor2);
-        }
-
-        return res;
-    }
-
-    /*************************************************
-     * COMPUTE ATTRACTOR
-     ************************************************/
-
-    public HashSet<Position> attractorOf (Player player, HashSet<Position> N)
-    {
-        HashSet<Position> attractor = N;
-
-        // This is only a shallow copy - the Position objects are the same and can be compared using "=="
-        HashSet<Position> complement_of_attractor = (HashSet<Position>) positions.clone();
-        complement_of_attractor.removeAll(N);
-
-        outerLoop:
-        while (true)
-        {
-
-            for (Position p : complement_of_attractor)
-            {
-                // We check, if the position belongs to the player and the player has a choice to go to the attractor
-                // or if it belongs to the other player and the other player has no choice but to go the attractor
-                if ((p.player == player && canGoFromTo(p, attractor))
-                        || (p.player != player && mustGoFromTo(p, attractor)))
-                {
-                    attractor.add(p);
-                    complement_of_attractor.remove(p);
-
-                    // We will get nasty errors if we continue the loop since we just removed an element of it
-                    // (which may be the next element in the iteration - autsch!)
-                    // So we will jump to the start of the outer loop again
-                    // This will cause the loop to run until the attractor doesn't change anymore
-                    continue outerLoop;
-                }
-            }
-            return attractor;
-
-        }
-    }
-
-    boolean canGoFromTo (Position p, HashSet<Position> attractor)
-    {
-        for (Transition t : transitions)
-        {
-            if (t.from == p && attractor.contains(t.to))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    boolean mustGoFromTo (Position p, HashSet<Position> attractor)
-    {
-        for (Transition t : transitions)
-        {
-            if (t.from == p && !attractor.contains(t.to))
-            {
-                return false;
-            }
-        }
-
-        // Small Sanity check
-        // If we dont have any transition NOT into the attractor
-        // we should have a transition in the attractor since the game doesn't deadlock
-        if (!canGoFromTo(p, attractor))
-        {
-            throw new RuntimeException("Game can Deadlock - something went wrong");
-        }
-
-        return true;
-    }
-
-    /*************************************************
-     * COMPUTE SUBGAME
-     ************************************************/
-
-    /**
-     * The subgame is a partial shallow copy of the nodes and transitions induced by a set of nodes
-     * The nodes and transitions are still the same objects as in the original game.
-     * The method doesn't check if the subgame deadlocks. This should never happen by construction.
-     */
-    public ParityGame subgameInducedBy (HashSet<Position> N)
-    {
-        ParityGame subgame = new ParityGame();
-        subgame.positions = N;
-
-        for (Transition t : transitions)
-        {
-            if (N.contains(t.from) && N.contains(t.to))
-            {
-                subgame.transitions.add(t);
-            }
-        }
-        return subgame;
-    }
-
-    /*************************************************
-     * OTHER HELPER STUFF
-     ************************************************/
-    static boolean isEven (int n)
-    {
-        return (n % 2) == 0;
-    }
-
-}
-
-class TupleOfWinningRegions
-{
-    HashSet<Position> winningRegionOfA;
-    HashSet<Position> winningRegionOfP;
-
-    public TupleOfWinningRegions ()
-    {
-        winningRegionOfA = new HashSet<Position>();
-        winningRegionOfP = new HashSet<Position>();
-
-    }
-
-    public String print ()
-    {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append("Winning Positions of A\n");
-        for (Position p : winningRegionOfA)
-        {
-            sb.append("    " + p.name + "\n");
-        }
-        sb.append("\n");
-
-        sb.append("Winning Positions of P\n");
-        for (Position p : winningRegionOfP)
-        {
-            sb.append("    " + p.name + "\n");
-        }
-        sb.append("\n\n");
-        return sb.toString();
-
-    }
-}
-
 /**
- * Quick & Dirty Implementation of the McNaughton-Zielonka Parity Game Solver
+ * Quick & Dirty Implementation of the McNaughton-Zielonka Parity Game Solver.
  * 
- * To keep the source code small, I used a "bad" coding style (everything in one file, nothing private, no sanity
- * checks, ...)
+ * To keep the source code small, the coding style is very bad (as you can see).
  * 
  * @author Sebastian Muskalla
  * 
@@ -369,18 +53,18 @@ public class ParityGameSolver
             first.addTrans(new Transition(h, g));
             first.addTrans(new Transition(h, a));
 
-            System.out.println(first.MCNZSolve().print());
+            System.out.println(first.MCNZSolve().toString());
 
             /*
              * Example 1
              * 
              * 
-             * Winning Positions of A
+             * Winning region of A
              * h
              * g
              * a
              * 
-             * Winning Positions of P
+             * Winning region of P
              * e
              * c
              * f
@@ -477,12 +161,12 @@ public class ParityGameSolver
             second.addTrans(new Transition(eP, bA));
             second.addTrans(new Transition(aP, fA));
 
-            System.out.println(second.MCNZSolve().print());
+            System.out.println(second.MCNZSolve().toString());
             /*
              * Example 2
              * 
              * 
-             * Winning Positions of A
+             * Winning region of A
              * e
              * c
              * e'
@@ -497,13 +181,338 @@ public class ParityGameSolver
              * b'
              * d'
              * 
-             * Winning Positions of P
+             * Winning region of P
              * f
              * h'
              * h
              */
-
         }
 
+    }
+}
+
+class Position
+{
+    String name;
+    Player player;
+    int priority;
+
+    public Position (String name, Player player, int priority)
+    {
+        this.name = name;
+        this.player = player;
+        this.priority = priority;
+    }
+}
+
+class Transition
+{
+    Position from;
+    Position to;
+
+    public Transition (Position from, Position to)
+    {
+        this.from = from;
+        this.to = to;
+    }
+}
+
+enum Player
+{
+    A, P;
+}
+
+class ParityGame
+{
+    // We use HashSet since they are clonable and Java guarantees that we don't add duplicates
+    HashSet<Position> positions;
+    HashSet<Transition> transitions;
+
+    public ParityGame ()
+    {
+        positions = new HashSet<Position>();
+        transitions = new HashSet<Transition>();
+    }
+
+    public void addTrans (Transition transition)
+    {
+        transitions.add(transition);
+    }
+
+    public void addPos (Position position)
+    {
+        positions.add(position);
+    }
+
+    /*************************************************
+     * SOLVER
+     ************************************************/
+
+    public int getMaxPriority ()
+    {
+        int n = -1;
+        for (Position p : positions)
+        {
+            if (p.priority > n)
+            {
+                n = p.priority;
+            }
+        }
+        return n;
+    }
+
+    public HashSet<Position> getPositionsWithPriority (int n)
+    {
+        HashSet<Position> res = new HashSet<Position>();
+
+        for (Position p : positions)
+        {
+            if (p.priority == n)
+            {
+                res.add(p);
+            }
+        }
+        return res;
+    }
+
+    public TupleOfWinningRegions MCNZSolve ()
+    {
+        TupleOfWinningRegions res = new TupleOfWinningRegions();
+
+        if (positions.isEmpty())
+        {
+            return res;
+        }
+
+        int n = getMaxPriority();
+
+        if (n < 0)
+        {
+            throw new RuntimeException("And then suddenly, something went terribly wrong...");
+        }
+
+        if (n == 0)
+        {
+            res.winningRegionOfA = positions;
+            return res;
+        }
+
+        HashSet<Position> N = getPositionsWithPriority(n);
+
+        HashSet<Position> attractor;
+
+        // Compute the attractor of the positions with the highest priority
+        if (isEven(n))
+        {
+            // n is even - A wins on the attractor
+            attractor = attractorOf(Player.A, N);
+        }
+        else
+        {
+            // n is odd - P wins on the attractor
+            attractor = attractorOf(Player.P, N);
+        }
+
+        // Shallow copy
+        @SuppressWarnings("unchecked")
+        HashSet<Position> complement = (HashSet<Position>) positions.clone();
+        complement.removeAll(attractor);
+
+        // Compute the subgame induced by the complement of the attractor
+        ParityGame subgame = subgameInducedBy(complement);
+        TupleOfWinningRegions wAwB = subgame.MCNZSolve();
+
+        // We check if the "other player" can't win the subgame on the complement
+        // Then the "player" wins the whole game
+        if (isEven(n) && wAwB.winningRegionOfP.isEmpty())
+        {
+            res.winningRegionOfA = positions;
+            return res;
+        }
+        if (!isEven(n) && wAwB.winningRegionOfA.isEmpty())
+        {
+            res.winningRegionOfP = positions;
+            return res;
+        }
+
+        // The other player wins at least a part of the subgame
+        // We have to calculate on which positions he can enforce a visit to his winning region
+
+        HashSet<Position> attractor2;
+
+        if (isEven(n))
+        {
+            attractor2 = attractorOf(Player.P, wAwB.winningRegionOfP);
+        }
+        else
+        {
+            attractor2 = attractorOf(Player.A, wAwB.winningRegionOfA);
+        }
+
+        // Shallow copy
+        @SuppressWarnings("unchecked")
+        // This cast will never fail
+        HashSet<Position> complement2 = (HashSet<Position>) positions.clone();
+        complement2.removeAll(attractor2);
+
+        // Compute the subgame induced by the complement of the attractor
+        ParityGame subgame2 = subgameInducedBy(complement2);
+        TupleOfWinningRegions wAwB2 = subgame2.MCNZSolve();
+
+        res.winningRegionOfA = wAwB2.winningRegionOfA;
+        res.winningRegionOfP = wAwB2.winningRegionOfP;
+
+        // Now add the corresponding part from the subgame
+        if (isEven(n))
+        {
+            res.winningRegionOfP.addAll(attractor2);
+
+        }
+        else
+        {
+            res.winningRegionOfA.addAll(attractor2);
+        }
+
+        return res;
+    }
+
+    /*************************************************
+     * COMPUTE ATTRACTOR
+     ************************************************/
+
+    public HashSet<Position> attractorOf (Player player, HashSet<Position> N)
+    {
+        HashSet<Position> attractor = N;
+
+        // This is only a shallow copy - the Position objects are the same and can be compared using "=="
+        @SuppressWarnings("unchecked")
+        HashSet<Position> complement_of_attractor = (HashSet<Position>) positions.clone();
+        complement_of_attractor.removeAll(N);
+
+        outerLoop:
+        while (true)
+        {
+
+            for (Position p : complement_of_attractor)
+            {
+                // We check, if the position belongs to the player and the player has a choice to go to the attractor
+                // or if it belongs to the other player and the other player has no choice but to go the attractor
+                if ((p.player == player && canGoFromTo(p, attractor))
+                        || (p.player != player && mustGoFromTo(p, attractor)))
+                {
+                    attractor.add(p);
+                    complement_of_attractor.remove(p);
+
+                    // We will get nasty errors if we continue the loop since we just removed an element of it
+                    // (which may be the next element in the iteration - autsch!)
+                    // So we will jump to the start of the outer loop again
+                    // This will cause the loop to run until the attractor doesn't change anymore
+                    continue outerLoop;
+                }
+            }
+            return attractor;
+
+        }
+    }
+
+    boolean canGoFromTo (Position p, HashSet<Position> attractor)
+    {
+        for (Transition t : transitions)
+        {
+            if (t.from == p && attractor.contains(t.to))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean mustGoFromTo (Position p, HashSet<Position> attractor)
+    {
+        for (Transition t : transitions)
+        {
+            if (t.from == p && !attractor.contains(t.to))
+            {
+                return false;
+            }
+        }
+
+        // Small Sanity check
+        // If we dont have any transition NOT into the attractor
+        // we should have a transition in the attractor since the game doesn't deadlock
+        if (!canGoFromTo(p, attractor))
+        {
+            throw new RuntimeException("Game can Deadlock - something went wrong");
+        }
+
+        return true;
+    }
+
+    /*************************************************
+     * COMPUTE SUBGAME
+     ************************************************/
+
+    /**
+     * The subgame is a partial shallow copy of the nodes and transitions induced by a set of nodes
+     * The nodes and transitions are still the same objects as in the original game.
+     * The method doesn't check if the subgame deadlocks. This should never happen by construction.
+     */
+    public ParityGame subgameInducedBy (HashSet<Position> N)
+    {
+        ParityGame subgame = new ParityGame();
+        subgame.positions = N;
+
+        for (Transition t : transitions)
+        {
+            if (N.contains(t.from) && N.contains(t.to))
+            {
+                subgame.transitions.add(t);
+            }
+        }
+        return subgame;
+    }
+
+    /*************************************************
+     * OTHER HELPER STUFF
+     ************************************************/
+
+    static boolean isEven (int n)
+    {
+        return (n % 2) == 0;
+    }
+
+}
+
+class TupleOfWinningRegions
+{
+    HashSet<Position> winningRegionOfA;
+    HashSet<Position> winningRegionOfP;
+
+    public TupleOfWinningRegions ()
+    {
+        winningRegionOfA = new HashSet<Position>();
+        winningRegionOfP = new HashSet<Position>();
+    }
+
+    @Override
+    public String toString ()
+    {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("Winning region of A\n");
+        for (Position p : winningRegionOfA)
+        {
+            sb.append(p.name + "\n");
+        }
+        sb.append("\n");
+
+        sb.append("Winning region of P\n");
+        for (Position p : winningRegionOfP)
+        {
+            sb.append(p.name + "\n");
+        }
+        sb.append("\n\n");
+
+        return sb.toString();
     }
 }
